@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Catch the Balls - Pro</title>
+<style>
+  :root {
+    --bg-color: #0f172a;
+    --canvas-bg: #1e293b;
+    --text-primary: #f8fafc;
+    --accent-blue: #3b82f6;
+    --accent-yellow: #fbbf24;
+    --accent-red: #ef4444;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--bg-color);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    overflow: hidden;
+    color: var(--text-primary);
+  }
+
+  #gameWrapper {
+    position: relative;
+    width: 400px;
+    height: 550px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.7);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  canvas {
+    background: radial-gradient(circle at top, #1e293b, #020617);
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: none; 
+  }
+
+  /* UI Overlays */
+  .overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(2, 6, 23, 0.85);
+    backdrop-filter: blur(4px);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+    transition: opacity 0.3s ease;
+  }
+
+  .hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  h1 {
+    font-size: 32px;
+    margin-bottom: 10px;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  }
+
+  p {
+    font-size: 16px;
+    color: #94a3b8;
+    margin-bottom: 30px;
+    text-align: center;
+    padding: 0 20px;
+  }
+
+  .stats {
+    font-size: 20px;
+    color: var(--accent-yellow);
+    margin-bottom: 20px;
+    font-weight: bold;
+  }
+
+  button {
+    background-color: var(--accent-blue);
+    color: white;
+    border: none;
+    padding: 12px 32px;
+    font-size: 18px;
+    font-weight: bold;
+    border-radius: 8px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    transition: transform 0.1s, background-color 0.2s;
+  }
+
+  button:hover {
+    background-color: #2563eb;
+    transform: translateY(-2px);
+  }
+
+  button:active {
+    transform: translateY(1px);
+  }
+</style>
+</head>
+<body>
+
+<div id="gameWrapper">
+  <canvas id="gameCanvas" width="400" height="550"></canvas>
+  
+  <!-- Start Screen -->
+  <div id="startScreen" class="overlay">
+    <h1>Catch the Balls</h1>
+    <p>Use your mouse, touch, or arrow keys to move the paddle. Don't miss more than 5 balls!</p>
+    <button id="startBtn">Start Game</button>
+  </div>
+
+  <!-- Game Over Screen -->
+  <div id="gameOverScreen" class="overlay hidden">
+    <h1>Game Over</h1>
+    <div class="stats" id="finalStats">Score: 0 | Level: 1</div>
+    <button id="restartBtn">Play Again</button>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  
+  // UI Elements
+  const startScreen = document.getElementById('startScreen');
+  const gameOverScreen = document.getElementById('gameOverScreen');
+  const finalStats = document.getElementById('finalStats');
+  const startBtn = document.getElementById('startBtn');
+  const restartBtn = document.getElementById('restartBtn');
+
+  // Game State
+  let score = 0;
+  let misses = 0;
+  const maxMisses = 5;
+  let level = 1;
+  const maxLevel = 10;
+  let gameOver = false;
+  let isPlaying = false;
+  let frameCount = 0;
+  let animationId;
+
+  // Paddle Setup
+  const paddle = {
+    width: 90,
+    height: 14,
+    x: canvas.width / 2 - 45,
+    y: canvas.height - 30,
+    speed: 8,
+    dx: 0,
+    color: '#3b82f6'
+  };
+
+  // Balls Array
+  let balls = [];
+  const ballRadius = 8;
+  
+  // Dynamic Difficulty Variables
+  let currentBallSpeed = 3.5;
+  let currentSpawnRate = 60;
+
+  // --- CONTROLS ---
+  // Keyboard
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'd') paddle.dx = paddle.speed;
+    else if (e.key === 'ArrowLeft' || e.key === 'a') paddle.dx = -paddle.speed;
+  });
+
+  document.addEventListener('keyup', (e) => {
+    if (['ArrowRight', 'ArrowLeft', 'd', 'a'].includes(e.key)) paddle.dx = 0;
+  });
+
+  // Mouse & Touch
+  function handlePointerMove(e) {
+    if (!isPlaying || gameOver) return;
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    let mouseX = clientX - rect.left;
+    
+    // Center paddle on pointer
+    paddle.x = mouseX - paddle.width / 2;
+    
+    // Constrain to canvas
+    if (paddle.x < 0) paddle.x = 0;
+    if (paddle.x + paddle.width > canvas.width) paddle.x = canvas.width - paddle.width;
+  }
+
+  canvas.addEventListener('mousemove', handlePointerMove);
+  canvas.addEventListener('touchmove', handlePointerMove, { passive: false });
+
+  // --- GAME LOGIC ---
+  function initGame() {
+    score = 0;
+    misses = 0;
+    level = 1;
+    balls = [];
+    paddle.x = canvas.width / 2 - paddle.width / 2;
+    gameOver = false;
+    isPlaying = true;
+    frameCount = 0;
+    
+    startScreen.classList.add('hidden');
+    gameOverScreen.classList.add('hidden');
+    
+    loop();
+  }
+
+  function createBall() {
+    const x = Math.random() * (canvas.width - ballRadius * 2) + ballRadius;
+    balls.push({ x: x, y: -ballRadius });
+  }
+
+  function updateDifficulty() {
+    // Level up every 15 points, capped at maxLevel (10)
+    level = Math.min(maxLevel, Math.floor(score / 15) + 1);
+    
+    // Increase speed and spawn rate based on level
+    currentBallSpeed = 3.0 + (level * 0.7); 
+    currentSpawnRate = Math.max(20, 60 - (level * 4)); 
+  }
+
+  function update() {
+    if (gameOver) return;
+
+    // Keyboard paddle movement
+    paddle.x += paddle.dx;
+    if (paddle.x < 0) paddle.x = 0;
+    if (paddle.x + paddle.width > canvas.width) paddle.x = canvas.width - paddle.width;
+
+    updateDifficulty();
+
+    // Spawn balls
+    frameCount++;
+    if (frameCount % currentSpawnRate === 0) {
+      createBall();
+    }
+
+    // Move and check balls
+    for (let i = 0; i < balls.length; i++) {
+      balls[i].y += currentBallSpeed;
+
+      // Collision with Paddle
+      if (
+        balls[i].y + ballRadius >= paddle.y &&
+        balls[i].y - ballRadius <= paddle.y + paddle.height &&
+        balls[i].x + ballRadius >= paddle.x &&
+        balls[i].x - ballRadius <= paddle.x + paddle.width
+      ) {
+        score++;
+        balls.splice(i, 1);
+        i--;
+        continue;
+      }
+
+      // Missed Ball
+      if (balls[i].y - ballRadius > canvas.height) {
+        misses++;
+        balls.splice(i, 1);
+        i--;
+        if (misses >= maxMisses) {
+          endGame();
+        }
+      }
+    }
+  }
+
+  function endGame() {
+    gameOver = true;
+    isPlaying = false;
+    cancelAnimationFrame(animationId);
+    finalStats.innerText = `Score: ${score} | Level: ${level}`;
+    gameOverScreen.classList.remove('hidden');
+  }
+
+  // --- RENDER LOGIC ---
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw HUD 
+    ctx.fillStyle = '#f8fafc'; 
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(`Score: ${score}`, 15, 30);
+    
+    ctx.fillStyle = level === maxLevel ? '#fbbf24' : '#94a3b8';
+    ctx.textAlign = 'center';
+    ctx.fillText(level === maxLevel ? `LEVEL MAX` : `Level: ${level}`, canvas.width / 2, 30);
+    
+    ctx.textAlign = 'right';
+    ctx.fillStyle = misses >= maxMisses - 1 ? '#ef4444' : '#f8fafc';
+    ctx.fillText(`Misses: ${misses}/${maxMisses}`, canvas.width - 15, 30);
+    ctx.textAlign = 'left'; 
+
+    // Draw Paddle with glow
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = paddle.color;
+    ctx.fillStyle = paddle.color;
+    ctx.beginPath();
+    ctx.roundRect(paddle.x, paddle.y, paddle.width, paddle.height, 8);
+    ctx.fill();
+
+    // Draw Balls with glow
+    ctx.shadowColor = '#fbbf24';
+    ctx.fillStyle = '#fbbf24';
+    balls.forEach(ball => {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    
+    ctx.shadowBlur = 0; 
+  }
+
+  function loop() {
+    if (!isPlaying) return;
+    update();
+    draw();
+    if (!gameOver) {
+      animationId = requestAnimationFrame(loop);
+    }
+  }
+
+  // Event Listeners for Buttons
+  startBtn.addEventListener('click', initGame);
+  restartBtn.addEventListener('click', initGame);
+
+  // Initial draw
+  draw();
+</script>
+</body>
+</html>
